@@ -101,7 +101,6 @@ module.exports = {
               ignoredRequests.add(params.requestId);
               continue;
             }
-            const page = pages[pages.length - 1];
             const cookieHeader = getHeaderValue(request.headers, 'Cookie');
 
             // Remove fragment, that's what Chrome does.
@@ -186,27 +185,17 @@ module.exports = {
               }
             }
 
-            if (!page) {
-              debug(
-                `Request will be sent with requestId ${
-                  params.requestId
-                } that can't be mapped to any page at the moment.`
-              );
-              // ignoredRequests.add(params.requestId);
-              entriesWithoutPage.push(entry);
-              paramsWithoutPage.push(params);
-              continue;
-            }
 
-            entries.push(entry);
+            entry.startedDateTime = dayjs.unix(params.timestamp).toISOString();
+
+            entries.push(JSON.parse(JSON.stringify(entry)));
 
             // this is the first request for this page, so set timestamp of page.
-            addFromFirstRequest(page, params);
+//            addFromFirstRequest(page, params);
             // wallTime is not necessarily monotonic, timestamp is. So calculate startedDateTime from timestamp diffs.
             // (see https://cs.chromium.org/chromium/src/third_party/WebKit/Source/platform/network/ResourceLoadTiming.h?q=requestTime+package:%5Echromium$&dr=CSs&l=84)
-            const entrySecs =
-              page.__wallTime + (params.timestamp - page.__timestamp);
-            entry.startedDateTime = dayjs.unix(entrySecs).toISOString();
+            // const entrySecs =
+            //   page.__wallTime + (params.timestamp - page.__timestamp);
           }
           break;
 
@@ -244,10 +233,6 @@ module.exports = {
 
         case 'Network.responseReceived':
           {
-            if (pages.length < 1) {
-              //we haven't loaded any pages yet.
-              continue;
-            }
             if (ignoredRequests.has(params.requestId)) {
               continue;
             }
@@ -266,18 +251,9 @@ module.exports = {
 
             const frameId =
               rootFrameMappings.get(params.frameId) || params.frameId;
-            const page = pages.find(page => page.__frameId === frameId);
-            if (!page) {
-              debug(
-                `Received network response for requestId ${
-                  params.requestId
-                } that can't be mapped to any page.`
-              );
-              continue;
-            }
 
             try {
-              populateEntryFromResponse(entry, params.response, page);
+              populateEntryFromResponse(entry, params.response);
             } catch (e) {
               debug(
                 `Error parsing response: ${JSON.stringify(
@@ -293,10 +269,6 @@ module.exports = {
 
         case 'Network.dataReceived':
           {
-            if (pages.length < 1) {
-              //we haven't loaded any pages yet.
-              continue;
-            }
             if (ignoredRequests.has(params.requestId)) {
               continue;
             }
@@ -319,10 +291,6 @@ module.exports = {
 
         case 'Network.loadingFinished':
           {
-            if (pages.length < 1) {
-              //we haven't loaded any pages yet.
-              continue;
-            }
             if (ignoredRequests.has(params.requestId)) {
               ignoredRequests.delete(params.requestId);
               continue;
@@ -500,7 +468,7 @@ module.exports = {
       }
       return o;
     };
-
+debugger;
     entries = entries
       .filter(entry => {
         if (!entry.response) {
@@ -509,32 +477,9 @@ module.exports = {
         return entry.response;
       })
       .map(deleteInternalProperties);
-    pages = pages.map(deleteInternalProperties);
-    pages = pages.reduce((result, page, index) => {
-      const hasEntry = entries.some(entry => entry.pageref === page.id);
-      if (hasEntry) {
-        result.push(page);
-      } else {
-        debug(`Skipping empty page: ${index + 1}`);
-      }
-      return result;
-    }, []);
-    const pagerefMapping = pages.reduce((result, page, index) => {
-      result[page.id] = `page_${index + 1}`;
-      return result;
-    }, {});
 
-    pages = pages.map(page => {
-      page.id = pagerefMapping[page.id];
-      return page;
-    });
-    entries = entries.map(entry => {
-      entry.pageref = pagerefMapping[entry.pageref];
-      return entry;
-    });
 
     // FIXME sanity check if there are any pages/entries created
-
     return {
       log: {
         version: '1.2',
